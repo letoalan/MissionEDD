@@ -243,7 +243,64 @@ function processEstablishments(records) {
 }
 
 /**
- * Lance la recherche complète d'établissements
+ * Génère les codes postaux associés pour inclure les boîtes postales
+ * @param {string} cp - Code postal principal
+ * @returns {Array} - Liste des codes postaux à rechercher
+ */
+function getRelatedPostalCodes(cp) {
+    const baseCodes = [cp];
+    const baseNumber = parseInt(cp.substring(0, 3));
+
+    // Ajouter les codes postaux de boîtes postales courrants
+    // Format: 87200 -> aussi chercher 87201, 87202, 87203, 87204, 87205
+    for (let i = 1; i <= 9; i++) {
+        const bpCode = `${baseNumber}0${i}`;
+        if (bpCode !== cp) {
+            baseCodes.push(bpCode);
+        }
+    }
+
+    return baseCodes;
+}
+
+/**
+* @param {string} commune - Nom de la commune
+* @param {string} cp - Code postal
+* @returns {Object|false} - Données de la commune validée ou false si invalide
+*/
+async function validateCommune(commune, cp) {
+    try {
+        showStatus("🔍 Validation de la commune...");
+        const response = await fetch(`https://geo.api.gouv.fr/communes?nom=${encodeURIComponent(commune)}&codePostal=${cp}&fields=nom,code,codesPostaux`);
+        const data = await response.json();
+
+        if (data.length === 0) {
+            showStatus("⚠️ Commune non trouvée pour ce code postal", "error");
+            return false;
+        }
+
+        if (data.length > 1) {
+            showStatus(`⚠️ ${data.length} communes trouvées avec ce nom/code postal`, "error");
+            console.warn("Plusieurs communes correspondent:", data);
+            // Pour l'instant, on prend la première, mais on pourrait ajouter un sélecteur
+            return data[0];
+        }
+
+        // Une seule commune trouvée - parfait !
+        const validatedCommune = data[0];
+        showStatus(`✅ Commune validée: ${validatedCommune.nom} (${cp})`, "success");
+        return validatedCommune;
+
+    } catch (e) {
+        console.warn("Erreur lors de la validation de commune:", e);
+        showStatus("⚠️ Impossible de valider la commune, recherche directe", "error");
+        // En cas d'erreur API, on continue quand même
+        return { nom: commune, code: null };
+    }
+}
+
+/**
+ * Lance la recherche complète d'établissements avec validation préalable
  */
 async function doSearch() {
     const commune = document.getElementById('commune').value.trim();
@@ -254,34 +311,61 @@ async function doSearch() {
         return;
     }
 
-    showStatus("Recherche en cours...");
+    // ÉTAPE 1: Validation de la commune avec l'API Geo
+    const validatedCommune = await validateCommune(commune, cp);
+    if (!validatedCommune) {
+        return; // Arrêt si commune invalide
+    }
+
+    // ÉTAPE 2: Recherche des établissements avec la commune validée
+    showStatus("🔍 Recherche des établissements...");
+
+    // Utiliser le nom officiel de la commune validée
+    const officialName = validatedCommune.nom;
+
+    // Générer les codes postaux associés (inclut les boîtes postales)
+    const relatedPostalCodes = getRelatedPostalCodes(cp);
+    console.log(`🔍 Recherche avec codes postaux: ${relatedPostalCodes.join(', ')}`);
 
     try {
-        // URL pour le dataset principal (annuaire éducation) - Filtrage exact par commune
-        const url1 = `https://data.education.gouv.fr/api/records/1.0/search/?dataset=fr-en-annuaire-education&refine.nom_commune=${encodeURIComponent(commune)}&refine.code_postal=${encodeURIComponent(cp)}&rows=100`;
+        // Recherches parallèles pour tous les codes postaux associés
+        const searchPromises = [];
 
-        // URL pour le dataset de géolocalisation (plus complet) - Filtrage exact par commune
-        const url2 = `https://data.education.gouv.fr/api/records/1.0/search/?dataset=fr-en-adresse-et-geolocalisation-etablissements-premier-et-second-degre&refine.commune=${encodeURIComponent(commune)}&refine.code_postal=${encodeURIComponent(cp)}&rows=100`;
+        relatedPostalCodes.forEach(postalCode => {
+            // Dataset principal
+            const url1 = `https://data.education.gouv.fr/api/records/1.0/search/?dataset=fr-en-annuaire-education&refine.nom_commune=${encodeURIComponent(officialName)}&refine.code_postal=${encodeURIComponent(postalCode)}&rows=100`;
 
-        // Requêtes parallèles
-        const [res1, res2] = await Promise.all([
-            fetch(url1).catch(() => ({ ok: false, json: () => ({records: []}) })),
-            fetch(url2).catch(() => ({ ok: false, json: () => ({records: []}) }))
-        ]);
+            // Dataset géolocalisation
+            const url2 = `https://data.education.gouv.fr/api/records/1.0/search/?dataset=fr-en-adresse-et-geolocalisation-etablissements-premier-et-second-degre&refine.commune=${encodeURIComponent(officialName)}&refine.code_postal=${encodeURIComponent(postalCode)}&rows=100`;
 
-        const data1 = res1.ok ? await res1.json() : { records: [] };
-        const data2 = res2.ok ? await res2.json() : { records: [] };
+            searchPromises.push(
+                fetch(url1).catch(() => ({ ok: false, json: () => ({records: []}) })),
+                fetch(url2).catch(() => ({ ok: false, json: () => ({records: []}) }))
+            );
+        });
 
-        // Combiner les résultats
-        let allRecords = combineResults(data1.records || [], data2.records || []);
+        // Attendre toutes les requêtes
+        const allResponses = await Promise.all(searchPromises);
 
-        // Si peu de résultats, faire une recherche élargie avec filtrage exact par commune
+        // Traiter toutes les réponses
+        let allRecords = [];
+        for (let i = 0; i < allResponses.length; i += 2) {
+            const res1 = allResponses[i];
+            const res2 = allResponses[i + 1];
+
+            const data1 = res1.ok ? await res1.json() : { records: [] };
+            const data2 = res2.ok ? await res2.json() : { records: [] };
+
+            allRecords = combineResults(allRecords, [...(data1.records || []), ...(data2.records || [])]);
+        }
+
+        // Si peu de résultats, faire une recherche élargie avec filtrage exact par commune validée
         if (allRecords.length < 10) {
-            showStatus("Recherche élargie en cours...");
+            showStatus("🔍 Recherche élargie en cours...");
 
             const departement = cp.substring(0, 2); // Extraire le département du code postal
-            // Recherche élargie mais toujours avec filtrage exact sur la commune
-            const url3 = `https://data.education.gouv.fr/api/records/1.0/search/?dataset=fr-en-annuaire-education&refine.nom_commune=${encodeURIComponent(commune)}&refine.code_departement=${departement}&rows=100`;
+            // Recherche élargie mais toujours avec filtrage exact sur la commune validée
+            const url3 = `https://data.education.gouv.fr/api/records/1.0/search/?dataset=fr-en-annuaire-education&refine.nom_commune=${encodeURIComponent(officialName)}&refine.code_departement=${departement}&rows=100`;
 
             try {
                 const res3 = await fetch(url3);
@@ -294,13 +378,57 @@ async function doSearch() {
             }
         }
 
-        // Traiter tous les établissements trouvés
-        processEstablishments(allRecords);
+        // ÉTAPE 3: Validation finale des résultats (accepter tous les codes postaux associés)
+        const finalResults = validateSearchResults(allRecords, officialName, relatedPostalCodes);
+
+        // Traiter tous les établissements trouvés et validés
+        processEstablishments(finalResults);
 
     } catch (e) {
         console.error("Erreur lors de la recherche:", e);
-        showStatus("Erreur lors du chargement des données", "error");
+        showStatus("❌ Erreur lors du chargement des données", "error");
     }
+}
+
+/**
+ * Valide les résultats de recherche pour s'assurer qu'ils correspondent à la commune attendue
+ * @param {Array} records - Résultats de la recherche
+ * @param {string} expectedCommune - Nom officiel de la commune attendue
+ * @param {Array} expectedCPs - Codes postaux acceptés (incluant boîtes postales)
+ * @returns {Array} - Résultats filtrés et validés
+ */
+function validateSearchResults(records, expectedCommune, expectedCPs) {
+    const validRecords = records.filter(record => {
+        const etab = record.fields;
+
+        // Vérification du code postal (accepter tous les codes associés)
+        const cpMatch = expectedCPs.includes(etab.code_postal);
+
+        // Vérification de la commune (flexible)
+        const communeName = (etab.nom_commune || etab.commune || etab.libelle_commune || '').toLowerCase();
+        const expectedName = expectedCommune.toLowerCase();
+        const communeMatch = communeName === expectedName ||
+            communeName.includes(expectedName) ||
+            expectedName.includes(communeName);
+
+        return cpMatch && communeMatch;
+    });
+
+    // Log des résultats filtrés pour debugging
+    const filteredOut = records.length - validRecords.length;
+    if (filteredOut > 0) {
+        console.log(`🧹 ${filteredOut} établissement(s) filtré(s) (commune/CP incohérent)`);
+    }
+
+    // Afficher les codes postaux trouvés
+    const foundCPs = [...new Set(validRecords.map(r => r.fields.code_postal))].sort();
+    if (foundCPs.length > 1) {
+        showStatus(`✅ ${validRecords.length} établissement(s) trouvé(s) (CP: ${foundCPs.join(', ')})`, "success");
+    } else {
+        showStatus(`✅ ${validRecords.length} établissement(s) trouvé(s)`, "success");
+    }
+
+    return validRecords;
 }
 
 // Permettre la recherche avec la touche Entrée et le bouton
