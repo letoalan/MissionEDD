@@ -257,11 +257,11 @@ async function doSearch() {
     showStatus("Recherche en cours...");
 
     try {
-        // URL pour le dataset principal (annuaire éducation)
-        const url1 = `https://data.education.gouv.fr/api/records/1.0/search/?dataset=fr-en-annuaire-education&q=${encodeURIComponent(commune)}&refine.code_postal=${encodeURIComponent(cp)}&rows=100`;
+        // URL pour le dataset principal (annuaire éducation) - Filtrage exact par commune
+        const url1 = `https://data.education.gouv.fr/api/records/1.0/search/?dataset=fr-en-annuaire-education&refine.nom_commune=${encodeURIComponent(commune)}&refine.code_postal=${encodeURIComponent(cp)}&rows=100`;
 
-        // URL pour le dataset de géolocalisation (plus complet)
-        const url2 = `https://data.education.gouv.fr/api/records/1.0/search/?dataset=fr-en-adresse-et-geolocalisation-etablissements-premier-et-second-degre&q=${encodeURIComponent(commune)}&refine.code_postal=${encodeURIComponent(cp)}&rows=100`;
+        // URL pour le dataset de géolocalisation (plus complet) - Filtrage exact par commune
+        const url2 = `https://data.education.gouv.fr/api/records/1.0/search/?dataset=fr-en-adresse-et-geolocalisation-etablissements-premier-et-second-degre&refine.commune=${encodeURIComponent(commune)}&refine.code_postal=${encodeURIComponent(cp)}&rows=100`;
 
         // Requêtes parallèles
         const [res1, res2] = await Promise.all([
@@ -275,12 +275,13 @@ async function doSearch() {
         // Combiner les résultats
         let allRecords = combineResults(data1.records || [], data2.records || []);
 
-        // Si peu de résultats, faire une recherche élargie sans filtre strict sur le code postal
+        // Si peu de résultats, faire une recherche élargie avec filtrage exact par commune
         if (allRecords.length < 10) {
             showStatus("Recherche élargie en cours...");
 
             const departement = cp.substring(0, 2); // Extraire le département du code postal
-            const url3 = `https://data.education.gouv.fr/api/records/1.0/search/?dataset=fr-en-annuaire-education&q=${encodeURIComponent(commune)}&refine.code_departement=${departement}&rows=100`;
+            // Recherche élargie mais toujours avec filtrage exact sur la commune
+            const url3 = `https://data.education.gouv.fr/api/records/1.0/search/?dataset=fr-en-annuaire-education&refine.nom_commune=${encodeURIComponent(commune)}&refine.code_departement=${departement}&rows=100`;
 
             try {
                 const res3 = await fetch(url3);
