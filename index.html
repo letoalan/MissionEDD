@@ -8,21 +8,25 @@
     <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster/dist/MarkerCluster.Default.css" />
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link rel="stylesheet" href="css/styles.css">
-
-
 </head>
 <body>
-<div id="map"></div>
-<div id="side">
-    <div id="search">
-        <input id="commune" placeholder="Commune" />
-        <input id="cp" placeholder="Code postal" />
-        <button>Rechercher</button>
+<div id="main-content">
+    <div id="map"></div>
+    <div id="side">
+        <div id="search">
+            <input id="commune" placeholder="Commune" />
+            <input id="cp" placeholder="Code postal" />
+            <button>Rechercher</button>
+        </div>
+        <div id="status">⚙️ Prêt</div>
+        <div id="results"></div>
+        <textarea id="coords" readonly placeholder="Coordonnées trouvées..."></textarea>
     </div>
-    <div id="status">⚙️ Prêt</div>
-    <div id="results"></div>
-    <textarea id="coords" readonly placeholder="Coordonnées trouvées..."></textarea>
 </div>
+
+<footer>
+    AD pour la mission académique à l'éducation au développement durable de l'académie de Limoges - 2025
+</footer>
 
 <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
 <script src="https://unpkg.com/leaflet.markercluster/dist/leaflet.markercluster.js"></script>
